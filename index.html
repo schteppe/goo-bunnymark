@@ -1,0 +1,340 @@
+<!DOCTYPE HTML>
+<html lang="en">
+<head>
+	<title>Batching</title>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="chrome=1">
+	<meta name="viewport" content="user-scalable=0, width=device-width, initial-scale=1.0" />
+	<script src="http://code.gooengine.com/0.11.1/lib/require.js"></script>
+	<style>
+	body {
+		font-family: Roboto,Helvetica,sans-serif;
+	}
+	canvas {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+	}
+
+	#demo-info {
+		position: absolute;
+		top: 0;
+		right: 0;
+		z-index: 1000;
+		padding:10px;
+	}
+
+	</style>
+</head>
+<body>
+	<script>
+		var isAdding = false;
+		var gravity = -0.01;
+		var maxX = 20;
+		var minX = -20;
+		var maxY = 10;
+		var minY = -10;
+		var maxZ = 10;
+		var minZ = -10;
+
+		require({
+			paths: {
+				goo: 'http://code.gooengine.com/0.11.1/lib/goo'
+			}
+		}, ['goo'], function () {
+			require([
+				'goo/entities/GooRunner',
+				'goo/entities/EntityUtils',
+				'goo/renderer/Material',
+				'goo/renderer/Camera',
+				'goo/entities/components/CameraComponent',
+				'goo/renderer/shaders/ShaderLib',
+				'goo/renderer/MeshData',
+				'goo/renderer/Shader',
+				'goo/entities/World',
+				'goo/math/Transform',
+				'goo/math/MathUtils',
+				'goo/shapes/Box',
+				'goo/shapes/Quad',
+				'goo/renderer/shaders/ShaderBuilder',
+				'goo/renderer/light/PointLight',
+				'goo/util/MeshBuilder',
+				'goo/scripts/Scripts',
+				'goo/scripts/OrbitCamControlScript',
+				'goo/renderer/TextureCreator',
+			], function (
+				GooRunner,
+				EntityUtils,
+				Material,
+				Camera,
+				CameraComponent,
+				ShaderLib,
+				MeshData,
+				Shader,
+				World,
+				Transform,
+				MathUtils,
+				Box,
+				Quad,
+				ShaderBuilder,
+				PointLight,
+				MeshBuilder,
+				Scripts,
+				OrbitCamControlScript,
+				TextureCreator
+			) {
+				"use strict";
+
+				// Initialize
+				var goo = new GooRunner({
+					showStats: true,
+					logo: {
+						position:'bottomright',
+						color:'black'
+					},
+				});
+				document.body.appendChild(goo.renderer.domElement);
+				goo.renderer.setClearColor(1, 1, 1, 1);
+
+				// Detach stats from GooRunner
+				var stats = goo.stats;
+				delete goo.stats;
+
+				var trans = new Transform();
+				trans.setIdentity();
+
+				var meshBuilder = new MeshBuilder();
+				var N = 0;
+				var box = new Quad();
+				addAttributes(box);
+				var col0, col1, col2, col3;
+				var maxVerts = 65536 / 10;
+				for(var i=0; i < maxVerts / box.vertexCount; i++){
+					meshBuilder.addMeshData(box, trans);
+				}
+				var meshData = meshBuilder.build()[0];
+
+				col0 = meshData.getAttributeBuffer('Col0');
+				/*col1 = meshData.getAttributeBuffer('Col1');
+				col2 = meshData.getAttributeBuffer('Col2');
+				col3 = meshData.getAttributeBuffer('Col3');*/
+
+				var bunnyData = [];
+
+				//var shader = ShaderLib.simpleLit;
+				var shader = ShaderLib.textured;
+				shader.attributes.col0 = 'Col0';
+				/*
+				shader.attributes.col1 = 'Col1';
+				shader.attributes.col2 = 'Col2';
+				shader.attributes.col3 = 'Col3';
+				*/
+				shader.vshader = [
+					'attribute vec3 vertexPosition;',
+					'attribute vec2 vertexUV0;',
+
+					'attribute vec3 col0;',
+					/*
+					'attribute vec4 col1;',
+					'attribute vec4 col2;',
+					'attribute vec4 col3;',
+					*/
+
+					'uniform mat4 viewProjectionMatrix;',
+					'uniform mat4 worldMatrix;',
+
+					'varying vec2 texCoord0;',
+
+					'void main(void) {',
+						'texCoord0 = vertexUV0;',
+						'gl_Position = viewProjectionMatrix * worldMatrix * (vec4(vertexPosition + col0, 1.0));',
+					'}'
+				].join('\n');
+
+			   	var texture = new TextureCreator().loadTexture2D('bunn.png');
+				texture.minFilter = 'NearestNeighborNoMipMaps';
+				texture.magFilter = 'NearestNeighbor';
+
+				// Add a material with a custom shader
+				var material = new Material(shader);
+
+				material.setTexture('DIFFUSE_MAP', texture);
+
+				var entity = goo.world.createEntity(meshData, material).addToWorld();
+				meshData.indexLengths = [0];
+
+				function addAttributes(meshData){
+					// Setup default attributes
+					var attributeMap = meshData.attributeMap;
+
+					// Add custom attribute
+					attributeMap.Col0 = MeshData.createAttribute(3, 'Float');
+					/*
+					attributeMap.Col1 = MeshData.createAttribute(4, 'Float');
+					attributeMap.Col2 = MeshData.createAttribute(4, 'Float');
+					attributeMap.Col3 = MeshData.createAttribute(4, 'Float');
+					*/
+					meshData.rebuildData();
+					meshData.rebuild();
+				}
+
+				var originalMeshes = [];
+				var originalMeshTransforms = [];
+				var speed = 0.5;
+
+				var howMany = 1;
+				function addBunnies(){
+					if((N + howMany) * box.vertexCount > maxVerts - 1)
+						return;
+					N += howMany;
+					meshData.indexLengths[0] = N * box.indexCount;
+					meshData.vertexCount = N * box.vertexCount;
+					meshData.indexCount = N * box.indexCount;
+
+					for(var i=originalMeshes.length; i<N; i++){
+						originalMeshes.push(box);
+						originalMeshTransforms.push(new Transform());
+						bunnyData.push({
+							speedX : Math.random() * speed,
+							speedY : 0,//speedY : (Math.random() * speed) - speed,
+							speedZ : (Math.random() * speed),
+							positionX: minX,
+							positionY: maxY,
+							positionZ: maxZ
+						});
+					}
+				}
+
+				function updateAttr(){
+					var totalVerts = 0;
+					for(var i=0; i<N; i++){
+						var mesh = originalMeshes[i];
+						var m = originalMeshTransforms[i].matrix.data;
+						for(var j=0; j < mesh.vertexCount; j++){
+							var a = totalVerts * 3 + j * 3;
+							col0[0 + a] = originalMeshTransforms[i].translation[0];
+							col0[1 + a] = originalMeshTransforms[i].translation[1];
+							col0[2 + a] = originalMeshTransforms[i].translation[2];
+							//col0[3 + a] = 0; //originalMeshTransforms[i].translation[0];
+							/*
+							col0[0 + a] = m[0];
+							col0[1 + a] = m[1];
+							col0[2 + a] = m[2];
+							col0[3 + a] = m[3];
+
+							col1[0 + a] = m[4];
+							col1[1 + a] = m[5];
+							col1[2 + a] = m[6];
+							col1[3 + a] = m[7];
+
+							col2[0 + a] = m[8];
+							col2[1 + a] = m[9];
+							col2[2 + a] = m[10];
+							col2[3 + a] = m[11];
+
+							col3[0 + a] = m[12];
+							col3[1 + a] = m[13];
+							col3[2 + a] = m[14];
+							col3[3 + a] = m[15];
+							*/
+						}
+						totalVerts += mesh.vertexCount;
+					}
+				}
+				updateAttr();
+
+				goo.callbacks.push(function(){
+					if(isAdding){
+						addBunnies();
+					}
+
+					for(var i=0; i<originalMeshes.length; i++){
+						var bunny = bunnyData[i];
+						bunny.positionX += bunny.speedX;
+						bunny.positionY += bunny.speedY;
+						bunny.positionZ += bunny.speedZ;
+						bunny.speedY += gravity;
+
+						if (bunny.positionX > maxX){
+							bunny.speedX *= -1;
+							bunny.positionX = maxX;
+						} else if (bunny.positionX < minX) {
+							bunny.speedX *= -1;
+							bunny.positionX = minX;
+						}
+
+						if (bunny.positionZ > maxZ){
+							bunny.speedZ *= -1;
+							bunny.positionZ = maxZ;
+						} else if (bunny.positionZ < minX) {
+							bunny.speedZ *= -1;
+							bunny.positionZ = minX;
+						}
+
+						if (bunny.positionY > maxY) {
+							bunny.speedY = 0;
+							bunny.positionY = maxY;
+						} else if (bunny.positionY < minY) {
+							bunny.speedY *= -1;
+							bunny.positionY = minY;
+						}
+
+						var t = originalMeshTransforms[i];
+						t.setRotationXYZ(
+							goo.world.time*(i%3),
+							goo.world.time*(i%5),
+							goo.world.time*(i%8)
+						);
+						t.translation.set(
+							bunny.positionX,
+							bunny.positionY,
+							bunny.positionZ
+						);
+						var s = i / N + 0.2;
+						t.update();
+					}
+					updateAttr();
+					meshData.setVertexDataUpdated();
+					entity.transformComponent.setUpdated();
+					entity.meshRendererComponent.cullMode = 'Never';
+
+					stats.update(
+						this.renderer.info.toString() + '<br>' +
+						'Bunnies: ' + bunnyData.length
+					);
+				});
+
+				// Add camera
+				var orbitScript = Scripts.create(OrbitCamControlScript, {
+					domElement: goo.renderer.domElement,
+				});
+				var camera = new Camera(45, 1, 1, 1000);
+				var cameraEntity = goo.world.createEntity(camera, orbitScript, [1, 1, 40]).addToWorld();
+
+				// Add light
+				goo.world.createEntity(new PointLight(), [0, 100, 100]).addToWorld();
+
+				addBunnies();
+			});
+		});
+
+	document.addEventListener("touchstart", onTouchStart, true);
+	document.addEventListener("touchend", onTouchEnd, true);
+	document.addEventListener("mousedown", onTouchStart, true);
+	document.addEventListener("mouseup", onTouchEnd, true);
+	function onTouchStart(event) {
+		isAdding = true;
+	}
+
+	function onTouchEnd(event) {
+		isAdding = false;
+	}
+	</script>
+
+	<div id="demo-info">
+		The <a href="http://www.goodboydigital.com/pixijs/bunnymark/">Pixi.js Bunnymark</a>, remade with <a href="https://www.goocreate.com/">Goo Engine</a> in 3D!
+	</div>
+</body>
+</html>
