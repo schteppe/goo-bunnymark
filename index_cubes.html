@@ -30,6 +30,10 @@
 </head>
 <body>
 	<script>
+
+		// Fix for the "setVelocity" error in chrome
+		PannerNode.prototype.setVelocity = AudioListener.prototype.setVelocity = function(){};
+
 		var isAdding = false;
 		var gravity = -0.01;
 		var maxX = 20;
