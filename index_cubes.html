@@ -5,7 +5,7 @@
 	<meta charset="utf-8">
 	<meta http-equiv="X-UA-Compatible" content="chrome=1">
 	<meta name="viewport" content="user-scalable=0, width=device-width, initial-scale=1.0" />
-	<script src="http://code.gooengine.com/0.11.1/lib/require.js"></script>
+	<script src="require.js"></script>
 	<style>
 	body {
 		font-family: Roboto,Helvetica,sans-serif;
@@ -44,9 +44,6 @@
 		var minZ = -10;
 
 		require({
-			paths: {
-				goo: 'http://code.gooengine.com/0.11.1/lib/goo'
-			}
 		}, ['goo'], function () {
 			require([
 				'goo/entities/GooRunner',
